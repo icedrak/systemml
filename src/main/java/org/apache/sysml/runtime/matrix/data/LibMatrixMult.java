@@ -883,6 +883,9 @@ public class LibMatrixMult
 		DenseBlock a = m1.getDenseBlock();
 		DenseBlock b = m2.getDenseBlock();
 		DenseBlock c = ret.getDenseBlock();
+
+		Systems.out.println("test");
+
 		final int m = m1.rlen;
 		final int n = m2.clen;
 		final int cd = m1.clen;
