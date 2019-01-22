@@ -45,6 +45,9 @@ import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.utils.NativeHelper;
 
+
+
+
 /**
  * MB: Library for matrix multiplications including MM, MV, VV for all
  * combinations of dense, sparse, ultrasparse representations and special
@@ -883,6 +886,17 @@ public class LibMatrixMult
 		DenseBlock a = m1.getDenseBlock();
 		DenseBlock b = m2.getDenseBlock();
 		DenseBlock c = ret.getDenseBlock();
+
+		System.out.println("Core of matrix multiplication on block");
+
+
+
+
+//		double[] a3 = m1.getDenseBlockValues();
+
+
+
+
 		final int m = m1.rlen;
 		final int n = m2.clen;
 		final int cd = m1.clen;
@@ -928,10 +942,12 @@ public class LibMatrixMult
 				matrixMultDenseDenseMMSkinnyRHS(a, b, c, m2.rlen, cd, rl, ru);
 			}
 			else {                          //MATRIX-MATRIX
+				System.out.print("in LOW-OPTIMIZATION");
 				matrixMultDenseDenseMM(a, b, c, n, cd, rl, ru, cl, cu);
 			}
 		}
 		else {
+			System.out.print("in no LOW-OPTIMIZATION");
 			for( int i = rl; i < ru; i++) {
 				double[] avals = a.values(i);
 				double[] cvals = c.values(i);
@@ -1055,6 +1071,8 @@ public class LibMatrixMult
 		final int blocksizeI = 32; //64//256KB c block (typical L2 size per core), 32KB a block 
 		final int blocksizeK = 24; //64//256KB b block (typical L2 size per core), used while read 512B of a / read/write 4KB of c 
 		final int blocksizeJ = 1024; //512//4KB (typical main-memory page size), for scan 
+
+		System.out.println("mm test");
 
 		//temporary arrays (nnz a, b index)
 		double[] ta = new double[ blocksizeK ];
