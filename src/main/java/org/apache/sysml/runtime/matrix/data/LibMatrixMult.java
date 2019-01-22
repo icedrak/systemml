@@ -974,29 +974,31 @@ public class LibMatrixMult
 //				blockA = null;
 //				blockB = null;
 //
+//				double before = ret.getValue(0,0);
+//
 //				JCublas.cublasDgemm('n', 'n', m,cd,n, alpha,d_A,m, d_B, m, beta, d_C, m);
 //
 //
 //
-//				double resultC[] = new double[blkSize];
-//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
-//
+////				double resultC[] = new double[blkSize];
+////				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
+//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
 //
 //				JCublas.cublasFree(d_C);
 //				JCublas.cublasFree(d_B);
 //				JCublas.cublasFree(d_A);
 //				JCublas.cublasShutdown();
 //
-////				double before = ret.getValue(0,0);
 //
-//				ret.init(resultC, m, n);
+////
+////				ret.init(resultC, m, n);
+////
+////				resultC = null;
+////				d_A = null;
+////				d_B = null;
+////				d_C = null;
 //
-//				resultC = null;
-//				d_A = null;
-//				d_B = null;
-//				d_C = null;
-
-
+//
 //				double after = ret.getValue(0,0);
 //
 //				System.out.println("comparision for result - before: " + before +" after: "+after );
