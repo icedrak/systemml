@@ -45,6 +45,17 @@ import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.utils.NativeHelper;
 
+
+import jcuda.*;
+import jcuda.jcublas.*;
+import jcuda.jcusparse.*;
+import jcuda.driver.CUdevice_attribute.*;
+import jcuda.driver.JCudaDriver.*;
+import jcuda.driver.*;
+import jcuda.runtime.*;
+import jcuda.driver.CUmodule;
+import jcuda.driver.CUdevice_attribute;
+
 /**
  * MB: Library for matrix multiplications including MM, MV, VV for all
  * combinations of dense, sparse, ultrasparse representations and special
@@ -931,7 +942,65 @@ public class LibMatrixMult
 				matrixMultDenseDenseMMSkinnyRHS(a, b, c, m2.rlen, cd, rl, ru);
 			}
 			else {                          //MATRIX-MATRIX
-                System.out.println("In LOW-OPTIMIZATION");
+
+				System.out.println("In LOW-OPTIMIZATION");
+                // modified code for using cuBLAS kernel instead of SystemML's kernel
+
+//				double[] blockA = m1.getDenseBlockValues();
+//				double[] blockB = m2.getDenseBlockValues();
+//
+//
+//				System.out.println("The size of block:" + m1.getNumRows() + "x" + m2.getNumColumns() );
+//				int blkSize = m1.getNumRows()*m2.getNumColumns();
+//
+//				Pointer d_A = new Pointer();
+//				Pointer d_B = new Pointer();
+//				Pointer d_C = new Pointer();
+//				double alpha = 1.0;
+//				double beta = 1.0;
+//
+//				JCublas.cublasInit();
+//				JCuda.cudaMalloc(d_A, blkSize * Sizeof.DOUBLE);
+//				JCuda.cudaMalloc(d_B, blkSize * Sizeof.DOUBLE);
+//				JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+//
+//				JCublas.cublasSetVector(blkSize, Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
+//				JCublas.cublasSetVector(blkSize, Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
+//
+//
+////				m1.cleanupBlock(true, false);
+////				m2.cleanupBlock(true, false);
+//
+//				blockA = null;
+//				blockB = null;
+//
+//				JCublas.cublasDgemm('n', 'n', m,cd,n, alpha,d_A,m, d_B, m, beta, d_C, m);
+//
+//
+//
+//				double resultC[] = new double[blkSize];
+//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
+//
+//
+//				JCublas.cublasFree(d_C);
+//				JCublas.cublasFree(d_B);
+//				JCublas.cublasFree(d_A);
+//				JCublas.cublasShutdown();
+//
+////				double before = ret.getValue(0,0);
+//
+//				ret.init(resultC, m, n);
+//
+//				resultC = null;
+//				d_A = null;
+//				d_B = null;
+//				d_C = null;
+
+
+//				double after = ret.getValue(0,0);
+//
+//				System.out.println("comparision for result - before: " + before +" after: "+after );
+
 				matrixMultDenseDenseMM(a, b, c, n, cd, rl, ru, cl, cu);
 			}
 		}
