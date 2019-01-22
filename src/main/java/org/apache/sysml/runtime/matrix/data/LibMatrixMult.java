@@ -883,6 +883,9 @@ public class LibMatrixMult
 		DenseBlock a = m1.getDenseBlock();
 		DenseBlock b = m2.getDenseBlock();
 		DenseBlock c = ret.getDenseBlock();
+
+		System.out.println("the core of local multiplication");
+
 		final int m = m1.rlen;
 		final int n = m2.clen;
 		final int cd = m1.clen;
@@ -928,10 +931,12 @@ public class LibMatrixMult
 				matrixMultDenseDenseMMSkinnyRHS(a, b, c, m2.rlen, cd, rl, ru);
 			}
 			else {                          //MATRIX-MATRIX
+                System.out.println("In LOW-OPTIMIZATION");
 				matrixMultDenseDenseMM(a, b, c, n, cd, rl, ru, cl, cu);
 			}
 		}
 		else {
+            System.out.println("In no LOW-OPTIMIZATION");
 			for( int i = rl; i < ru; i++) {
 				double[] avals = a.values(i);
 				double[] cvals = c.values(i);
