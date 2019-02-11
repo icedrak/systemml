@@ -140,7 +140,8 @@ public class LibMatrixMult
 			checkParMatrixMultRightInputRows(m1, m2, Integer.MAX_VALUE);
 		int ru2 = (pm2 && ru==m1.rlen) ? m2.rlen : ru; 
 		int cu = m2.clen;
-		
+
+
 		//core matrix mult computation
 		if( ultraSparse )
 			matrixMultUltraSparse(m1, m2, ret, 0, ru2);
@@ -895,11 +896,13 @@ public class LibMatrixMult
 		DenseBlock b = m2.getDenseBlock();
 		DenseBlock c = ret.getDenseBlock();
 
-		System.out.println("the core of local multiplication");
+		System.out.println("the core of local dense dense multiplication");
 
 		final int m = m1.rlen;
 		final int n = m2.clen;
 		final int cd = m1.clen;
+
+		System.out.println("In dense dense LOW-OPTIMIZATION " +m +" X " +cd+ ", "+m2.rlen+ " X " + n);
 		
 		if( LOW_LEVEL_OPTIMIZATION ) {
 			if( m==1 && n==1 ) {            //DOT PRODUCT
@@ -942,69 +945,157 @@ public class LibMatrixMult
 				matrixMultDenseDenseMMSkinnyRHS(a, b, c, m2.rlen, cd, rl, ru);
 			}
 			else {                          //MATRIX-MATRIX
+				if(m < n || n < 1000){
+					double[] blockA = m1.getDenseBlockValues();
+					double[] blockB = m2.getDenseBlockValues();
+					final int blkSize = m * 1000;
+					double[] tmpB = new double[cd*1000];
 
-				System.out.println("In LOW-OPTIMIZATION");
-                // modified code for using cuBLAS kernel instead of SystemML's kernel
+					System.arraycopy(blockB, 0, tmpB, 0, blockB.length);
 
-//				double[] blockA = m1.getDenseBlockValues();
-//				double[] blockB = m2.getDenseBlockValues();
-//
-//
-//				System.out.println("The size of block:" + m1.getNumRows() + "x" + m2.getNumColumns() );
-//				int blkSize = m1.getNumRows()*m2.getNumColumns();
-//
-//				Pointer d_A = new Pointer();
-//				Pointer d_B = new Pointer();
-//				Pointer d_C = new Pointer();
-//				double alpha = 1.0;
-//				double beta = 1.0;
-//
-//				JCublas.cublasInit();
-//				JCuda.cudaMalloc(d_A, blkSize * Sizeof.DOUBLE);
-//				JCuda.cudaMalloc(d_B, blkSize * Sizeof.DOUBLE);
-//				JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
-//
-//				JCublas.cublasSetVector(blkSize, Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
-//				JCublas.cublasSetVector(blkSize, Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
-//
-//
-////				m1.cleanupBlock(true, false);
-////				m2.cleanupBlock(true, false);
-//
-//				blockA = null;
-//				blockB = null;
-//
-//				double before = ret.getValue(0,0);
-//
-//				JCublas.cublasDgemm('n', 'n', m,cd,n, alpha,d_A,m, d_B, m, beta, d_C, m);
-//
-//
-//
-////				double resultC[] = new double[blkSize];
-////				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
-//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
-//
-//				JCublas.cublasFree(d_C);
-//				JCublas.cublasFree(d_B);
-//				JCublas.cublasFree(d_A);
-//				JCublas.cublasShutdown();
-//
-//
-////
-////				ret.init(resultC, m, n);
-////
-////				resultC = null;
-////				d_A = null;
-////				d_B = null;
-////				d_C = null;
-//
-//
-//				double after = ret.getValue(0,0);
-//
-//				System.out.println("comparision for result - before: " + before +" after: "+after );
 
-				matrixMultDenseDenseMM(a, b, c, n, cd, rl, ru, cl, cu);
+					Pointer d_A = new Pointer();
+					Pointer d_B = new Pointer();
+					Pointer d_C = new Pointer();
+					double alpha = 1.0;
+					double beta = 0.0;
+
+					JCublas2.setExceptionsEnabled(true);
+					//		JCublas.cublasInit();
+
+					cublasHandle cublasHandle = new cublasHandle();
+					JCublas2.cublasCreate(cublasHandle);
+
+					long[] free = new long[1];
+					long[] total = new long[1];
+					JCuda.cudaMemGetInfo(free, total);
+
+					System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+					JCuda.cudaMalloc(d_A, m1.getNumRows() * m1.getNumColumns() * Sizeof.DOUBLE);
+					JCuda.cudaMalloc(d_B, cd*1000 * Sizeof.DOUBLE);
+					JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+					JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+
+					JCublas2.cublasSetMatrix(m1.getNumRows(), m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), m1.getNumRows(), d_A, m1.getNumRows());
+					JCublas2.cublasSetMatrix(cd, 1000, Sizeof.DOUBLE, Pointer.to(tmpB),cd, d_B,cd);
+
+
+					blockA = null;
+					blockB = null;
+					tmpB = null;
+
+					double before = ret.getValue(0, 0);
+
+					JCublas2.cublasDgemm(cublasHandle, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, jcuda.jcublas.cublasOperation.CUBLAS_OP_N,
+							m, cd, 1000, Pointer.to(new double[]{alpha}), d_A, m, d_B, cd, Pointer.to(new double[]{beta}), d_C, m);
+
+					double[] tmpC = new double[m*1000];
+					JCublas2.cublasGetMatrix(m1.getNumRows(), 1000, Sizeof.DOUBLE, d_C, m1.getNumRows(), Pointer.to(tmpC), m1.getNumRows());
+					//		JCuda.cudaMemcpy(d_C, Pointer.to(ret.getDenseBlockValues()), blkSize
+					//				* Sizeof.DOUBLE, cudaMemcpyKind.cudaMemcpyDeviceToHost);
+
+					System.arraycopy(tmpC, 0, ret.getDenseBlockValues(), 0, ret.getDenseBlockValues().length);
+
+					JCuda.cudaFree(d_C);
+					JCuda.cudaFree(d_B);
+					JCuda.cudaFree(d_A);
+
+
+					JCuda.cudaMemGetInfo(free, total);
+
+					System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+					JCublas2.cublasDestroy(cublasHandle);
+
+					double after = ret.getValue(0, 0);
+
+					System.out.println("comparision for result - before: " + before + " after: " + after +", " + tmpC[0]);
+				}else {
+					System.out.println("In LOW-OPTIMIZATION");
+					// modified code for using cuBLAS kernel instead of SystemML's kernel
+
+					double[] blockA = m1.getDenseBlockValues();
+					double[] blockB = m2.getDenseBlockValues();
+
+
+					System.out.println("The size of block:" + m1.getNumRows() + "x" + m2.getNumColumns());
+					int blkSize = m1.getNumRows() * m2.getNumColumns();
+
+					Pointer d_A = new Pointer();
+					Pointer d_B = new Pointer();
+					Pointer d_C = new Pointer();
+					double alpha = 1.0;
+					double beta = 0.0;
+
+
+					//				JCublas.setExceptionsEnabled(true);
+					JCublas.cublasInit();
+					//				JCuda.setExceptionsEnabled(true);
+
+					long[] free = new long[1];
+					long[] total = new long[1];
+
+					//				JCuda.cudaMemGetInfo(free, total);
+					//
+					//				System.out.println("free: "+(double)free[0]/1024.0/1024.0+" total: "+ (double)total[0]/1024.0/1024.0+" used: " +(double)(total[0] - free[0])/1024.0/1024.0);
+
+					JCuda.cudaMalloc(d_A, m1.getNumRows() * m1.getNumColumns() * Sizeof.DOUBLE);
+					JCuda.cudaMalloc(d_B, m2.getNumRows() * m2.getNumColumns() * Sizeof.DOUBLE);
+					JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+					JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+
+					JCublas.cublasSetVector(m1.getNumRows() * m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
+					JCublas.cublasSetVector(m2.getNumRows() * m2.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
+
+
+					//				m1.cleanupBlock(true, false);
+					//				m2.cleanupBlock(true, false);
+
+					blockA = null;
+					blockB = null;
+
+					double before = ret.getValue(0, 0);
+
+					JCublas.cublasDgemm('n', 'n', m, cd, n, alpha, d_A, m, d_B, cd, beta, d_C, m);
+
+
+					//				double resultC[] = new double[blkSize];
+					//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
+					JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
+
+
+					JCuda.cudaDeviceSynchronize();
+
+					JCublas.cublasFree(d_C);
+					JCublas.cublasFree(d_B);
+					JCublas.cublasFree(d_A);
+
+
+					JCuda.cudaMemGetInfo(free, total);
+
+					System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+					JCublas.cublasShutdown();
+
+
+					//
+					//				ret.init(resultC, m, n);
+					//
+					//				resultC = null;
+					//				d_A = null;
+					//				d_B = null;
+					//				d_C = null;
+
+
+					double after = ret.getValue(0, 0);
+
+					System.out.println("comparision for result - before: " + before + " after: " + after);
+				}
+//				matrixMultDenseDenseMM(a, b, c, n, cd, rl, ru, cl, cu);
 			}
+
 		}
 		else {
             System.out.println("In no LOW-OPTIMIZATION");
@@ -1183,120 +1274,584 @@ public class LibMatrixMult
 
 	private static void matrixMultDenseSparse(MatrixBlock m1, MatrixBlock m2, MatrixBlock ret, boolean pm2, int rl, int ru) {
 		DenseBlock a = m1.getDenseBlock();
-		DenseBlock c = ret.getDenseBlock();
+//		DenseBlock c = ret.getDenseBlock();
 		int m = m1.rlen;
 		int cd = m1.clen;
-		
-		// MATRIX-MATRIX (VV, MV not applicable here because V always dense)
-		if( LOW_LEVEL_OPTIMIZATION )
-		{
-			SparseBlock b = m2.sparseBlock;
-			
-			if( pm2 && m==1 ) {        //VECTOR-MATRIX
-				//parallelization over rows in rhs matrix
-				double[] avals = a.valuesAt(0); //vector
-				double[] cvals = c.valuesAt(0); //vector
-				for( int k=rl; k<ru; k++ )
-					if( avals[k] != 0 && !b.isEmpty(k) ) {
-						vectMultiplyAdd(avals[k], b.values(k), cvals,
-							b.indexes(k), b.pos(k), 0, b.size(k));
-					}
+		final int n = m2.clen;
+
+		System.out.println("In LOW-OPTIMIZATION");
+		// modified code for using cuBLAS kernel instead of SystemML's kernel
+
+
+
+		if(m < n || n <= 1000){
+			double[] blockA = m1.getDenseBlockValues();
+			m2.sparseToDense();
+			double[] blockB = m2.getDenseBlockValues();
+			final int blkSize = m * 1000;
+			double[] tmpB = new double[cd*1000];
+
+			System.arraycopy(blockB, 0, tmpB, 0, blockB.length);
+
+
+			Pointer d_A = new Pointer();
+			Pointer d_B = new Pointer();
+			Pointer d_C = new Pointer();
+			double alpha = 1.0;
+			double beta = 0.0;
+
+			JCublas2.setExceptionsEnabled(true);
+			//		JCublas.cublasInit();
+
+			cublasHandle cublasHandle = new cublasHandle();
+			JCublas2.cublasCreate(cublasHandle);
+
+			long[] free = new long[1];
+			long[] total = new long[1];
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCuda.cudaMalloc(d_A, m1.getNumRows() * m1.getNumColumns() * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_B, cd*1000 * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+			JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+
+			JCublas2.cublasSetMatrix(m1.getNumRows(), m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), m1.getNumRows(), d_A, m1.getNumRows());
+			JCublas2.cublasSetMatrix(cd, 1000, Sizeof.DOUBLE, Pointer.to(tmpB),cd, d_B,cd);
+
+			m2.examSparsity(true);
+			if (m2.isInSparseFormat()) {
+				System.out.println("sparse block");
+				if (m2.getDenseBlock() != null)
+					System.out.println("both representation");
 			}
-			else {                     //MATRIX-MATRIX
-				//best effort blocking, without blocking over J because it is 
-				//counter-productive, even with front of current indexes
-				final int blocksizeK = 32;
-				final int blocksizeI = 32;
-				
-				//blocked execution
-				for( int bi = rl; bi < ru; bi+=blocksizeI )
-					for( int bk = 0, bimin = Math.min(ru, bi+blocksizeI); bk < cd; bk+=blocksizeK ) {
-						int bkmin = Math.min(cd, bk+blocksizeK);
-						//core sub block matrix multiplication
-						for(int i = bi; i < bimin; i++) {
-							double[] avals = a.values(i), cvals = c.values(i);
-							int aix = a.pos(i), cix = c.pos(i);
-							for( int k = bk; k < bkmin; k++ ) {
-								double aval = avals[aix+k];
-								if( aval == 0 || b.isEmpty(k) )
-									continue;
-								vectMultiplyAdd(aval, b.values(k), cvals, 
-									b.indexes(k), b.pos(k), cix, b.size(k));
-							}
-						}
-					}
+			blockA = null;
+			blockB = null;
+			tmpB = null;
+
+			double before = ret.getValue(0, 0);
+
+			JCublas2.cublasDgemm(cublasHandle, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, m, cd, 1000, Pointer.to(new double[]{alpha}), d_A, m, d_B, cd, Pointer.to(new double[]{beta}), d_C, m);
+
+			double[] tmpC = new double[m*1000];
+			JCublas2.cublasGetMatrix(m1.getNumRows(), 1000, Sizeof.DOUBLE, d_C, m1.getNumRows(), Pointer.to(tmpC), m1.getNumRows());
+			//		JCuda.cudaMemcpy(d_C, Pointer.to(ret.getDenseBlockValues()), blkSize
+			//				* Sizeof.DOUBLE, cudaMemcpyKind.cudaMemcpyDeviceToHost);
+
+			System.arraycopy(tmpC, 0, ret.getDenseBlockValues(), 0, ret.getDenseBlockValues().length);
+
+			JCuda.cudaFree(d_C);
+			JCuda.cudaFree(d_B);
+			JCuda.cudaFree(d_A);
+
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCublas2.cublasDestroy(cublasHandle);
+
+			double after = ret.getValue(0, 0);
+
+			System.out.println("comparision for result - before: " + before + " after: " + after +", " + tmpC[0]);
+		}else {
+
+			double[] blockA = m1.getDenseBlockValues();
+
+			m2.sparseToDense();
+
+			if (m2.isInSparseFormat()) {
+				System.out.println("sparse????");
 			}
+
+
+			double[] blockB = m2.getDenseBlockValues();
+
+			//		JCuda.setExceptionsEnabled(true);
+
+
+			System.out.println("The dense sparse size of block:" + m1.getNumRows() + "x" + m2.getNumColumns());
+			final int blkSize = m1.getNumRows() * m2.getNumColumns();
+
+			Pointer d_A = new Pointer();
+			Pointer d_B = new Pointer();
+			Pointer d_C = new Pointer();
+			double alpha = 1.0;
+			double beta = 0.0;
+
+			JCublas2.setExceptionsEnabled(true);
+			//		JCublas.cublasInit();
+
+			cublasHandle cublasHandle = new cublasHandle();
+			JCublas2.cublasCreate(cublasHandle);
+
+
+			long[] free = new long[1];
+			long[] total = new long[1];
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCuda.cudaMalloc(d_A, m1.getNumRows() * m1.getNumColumns() * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_B, m2.getNumRows() * m2.getNumColumns() * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+			JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+			//
+			//		JCublas.cublasSetVector(m1.getNumRows()*m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
+			//		JCublas.cublasSetVector(m2.getNumRows()*m2.getNumColumns() , Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
+
+
+			JCublas2.cublasSetMatrix(m1.getNumRows(), m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), m1.getNumRows(), d_A, m1.getNumRows());
+			JCublas2.cublasSetMatrix(m2.getNumRows(), m2.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockB), m2.getNumRows(), d_B, m2.getNumRows());
+
+			m2.examSparsity(true);
+			if (m2.isInSparseFormat()) {
+				System.out.println("sparse block");
+				if (m2.getDenseBlock() != null)
+					System.out.println("both representation");
+			}
+
+			blockA = null;
+			blockB = null;
+
+			double before = ret.getValue(0, 0);
+
+			JCublas2.cublasDgemm(cublasHandle, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, m, cd, n, Pointer.to(new double[]{alpha}), d_A, m, d_B, cd, Pointer.to(new double[]{beta}), d_C, m);
+
+
+			//		double[] test = new double[blkSize];
+			//		JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
+			//		JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(test), 1);
+			JCublas2.cublasGetMatrix(m1.getNumRows(), m2.getNumColumns(), Sizeof.DOUBLE, d_C, m1.getNumRows(), Pointer.to(ret.getDenseBlockValues()), m1.getNumRows());
+			//		JCuda.cudaMemcpy(d_C, Pointer.to(ret.getDenseBlockValues()), blkSize
+			//				* Sizeof.DOUBLE, cudaMemcpyKind.cudaMemcpyDeviceToHost);
+
+			JCuda.cudaFree(d_C);
+			JCuda.cudaFree(d_B);
+			JCuda.cudaFree(d_A);
+
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+			//		JCublas.cublasShutdown();
+			JCublas2.cublasDestroy(cublasHandle);
+
+
+			//ss
+			//				ret.init(resultC, m, n);
+			//
+			//				resultC = null;
+			//				d_A = null;
+			//				d_B = null;
+			//				d_C = null;
+
+
+			double after = ret.getValue(0, 0);
+
+			System.out.println("comparision for result - before: " + before + " after: " + after);
 		}
-		else {
-			SparseBlock b = m2.sparseBlock;
-			for( int i=rl; i < ru; i++ ) {
-				double[] avals = a.values(i), cvals = c.values(i);
-				int aix = a.pos(i), cix = c.pos(i);
-				for(int k = 0; k < cd; k++ ) {
-					double val = avals [aix];
-					if( val == 0 || b.isEmpty(k) ) continue;
-					int bpos = b.pos(k);
-					int blen = b.size(k);
-					int[] bix = b.indexes(k);
-					double[] bvals = b.values(k);
-					for(int j = bpos; j < bpos+blen; j++)
-						cvals[cix+bix[j]] += val * bvals[j];
-				}
-			}
-		}
+
+
+
+//		// MATRIX-MATRIX (VV, MV not applicable here because V always dense)
+//		if( LOW_LEVEL_OPTIMIZATION )
+//		{
+//			SparseBlock b = m2.sparseBlock;
+//
+//			if( pm2 && m==1 ) {        //VECTOR-MATRIX
+//				//parallelization over rows in rhs matrix
+//				double[] avals = a.valuesAt(0); //vector
+//				double[] cvals = c.valuesAt(0); //vector
+//				for( int k=rl; k<ru; k++ )
+//					if( avals[k] != 0 && !b.isEmpty(k) ) {
+//						vectMultiplyAdd(avals[k], b.values(k), cvals,
+//							b.indexes(k), b.pos(k), 0, b.size(k));
+//					}
+//			}
+//			else {                     //MATRIX-MATRIX
+//				//best effort blocking, without blocking over J because it is
+//				//counter-productive, even with front of current indexes
+//				final int blocksizeK = 32;
+//				final int blocksizeI = 32;
+//
+//				//blocked execution
+//				for( int bi = rl; bi < ru; bi+=blocksizeI )
+//					for( int bk = 0, bimin = Math.min(ru, bi+blocksizeI); bk < cd; bk+=blocksizeK ) {
+//						int bkmin = Math.min(cd, bk+blocksizeK);
+//						//core sub block matrix multiplication
+//						for(int i = bi; i < bimin; i++) {
+//							double[] avals = a.values(i), cvals = c.values(i);
+//							int aix = a.pos(i), cix = c.pos(i);
+//							for( int k = bk; k < bkmin; k++ ) {
+//								double aval = avals[aix+k];
+//								if( aval == 0 || b.isEmpty(k) )
+//									continue;
+//								vectMultiplyAdd(aval, b.values(k), cvals,
+//									b.indexes(k), b.pos(k), cix, b.size(k));
+//							}
+//						}
+//					}
+//			}
+//		}
+//		else {
+//			SparseBlock b = m2.sparseBlock;
+//			for( int i=rl; i < ru; i++ ) {
+//				double[] avals = a.values(i), cvals = c.values(i);
+//				int aix = a.pos(i), cix = c.pos(i);
+//				for(int k = 0; k < cd; k++ ) {
+//					double val = avals [aix];
+//					if( val == 0 || b.isEmpty(k) ) continue;
+//					int bpos = b.pos(k);
+//					int blen = b.size(k);
+//					int[] bix = b.indexes(k);
+//					double[] bvals = b.values(k);
+//					for(int j = bpos; j < bpos+blen; j++)
+//						cvals[cix+bix[j]] += val * bvals[j];
+//				}
+//			}
+//		}
 	}
 
-	private static void matrixMultSparseDense(MatrixBlock m1, MatrixBlock m2, MatrixBlock ret, boolean pm2, int rl, int ru) {
-		SparseBlock a = m1.sparseBlock;
-		DenseBlock b = m2.getDenseBlock();
-		DenseBlock c = ret.getDenseBlock();
-		final int m = m1.rlen;
-		final int n = m2.clen;
-		final int cd = m2.rlen;
-		final long xsp = (long)m*cd/m1.nonZeros;
+	private static void errorCheck(int errorcode){
+		if(jcuda.jcublas.cublasStatus.CUBLAS_STATUS_NOT_INITIALIZED == errorcode) {
+			System.out.println("cublas CUBLAS_STATUS_NOT_INITIALIZED code: "+errorcode);
+			errorCheck(JCublas.cublasInit());
+		}
 
-		if( LOW_LEVEL_OPTIMIZATION ) {
-			if( m==1 && n==1 ) {            //DOT PRODUCT
-				if( !a.isEmpty(0) )
-					c.set(0, 0, dotProduct(a.values(0), b.values(0), a.indexes(0), a.pos(0), 0, a.size(0)));
+	}
+	private static void matrixMultSparseDense(MatrixBlock m1, MatrixBlock m2, MatrixBlock ret, boolean pm2, int rl, int ru) {
+//		SparseBlock a = m1.sparseBlock;
+//		DenseBlock b = m2.getDenseBlock();
+//		DenseBlock c = ret.getDenseBlock();
+		final int m = m1.rlen;
+		final int cd = m2.rlen;
+		final int n = m2.clen;
+
+
+//		int m = m1.rlen;
+//		int cd = m1.clen;
+//		final int n = m2.clen;
+//		final long xsp = (long)m*cd/m1.nonZeros;
+
+		System.out.println("In sparse dense LOW-OPTIMIZATION " +m +" X " +cd+ ", "+m2.rlen+ " X " + n);
+		// modified code for using cuBLAS kernel instead of SystemML's kernel
+		if(m < n || n <= 1000){
+			m1.sparseToDense();
+			double[] blockA = m1.getDenseBlockValues();
+			double[] blockB = m2.getDenseBlockValues();
+			final int blkSize = m * 1000;
+			double[] tmpB = new double[cd*1000];
+
+			System.arraycopy(blockB, 0, tmpB, 0, blockB.length);
+
+
+			Pointer d_A = new Pointer();
+			Pointer d_B = new Pointer();
+			Pointer d_C = new Pointer();
+			double alpha = 1.0;
+			double beta = 0.0;
+
+			JCublas2.setExceptionsEnabled(true);
+			//		JCublas.cublasInit();
+
+			cublasHandle cublasHandle = new cublasHandle();
+			JCublas2.cublasCreate(cublasHandle);
+
+			long[] free = new long[1];
+			long[] total = new long[1];
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCuda.cudaMalloc(d_A, m1.getNumRows() * m1.getNumColumns() * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_B, cd*1000 * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+			JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+
+			JCublas2.cublasSetMatrix(m1.getNumRows(), m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), m1.getNumRows(), d_A, m1.getNumRows());
+			JCublas2.cublasSetMatrix(cd, 1000, Sizeof.DOUBLE, Pointer.to(tmpB),cd, d_B,cd);
+
+			m1.examSparsity(true);
+			if (m1.isInSparseFormat()) {
+				System.out.println("sparse block");
+				if (m1.getDenseBlock() != null)
+					System.out.println("both representation");
 			}
-			else if( n==1 && cd<=2*1024 ) { //MATRIX-VECTOR (short rhs)
-				matrixMultSparseDenseMVShortRHS(a, b, c, cd, rl, ru);
+			blockA = null;
+			blockB = null;
+			tmpB = null;
+
+			double before = ret.getValue(0, 0);
+
+			JCublas2.cublasDgemm(cublasHandle, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, jcuda.jcublas.cublasOperation.CUBLAS_OP_N, m, cd, 1000, Pointer.to(new double[]{alpha}), d_A, m, d_B, cd, Pointer.to(new double[]{beta}), d_C, m);
+
+			double[] tmpC = new double[m*1000];
+			JCublas2.cublasGetMatrix(m1.getNumRows(), 1000, Sizeof.DOUBLE, d_C, m1.getNumRows(), Pointer.to(tmpC), m1.getNumRows());
+			//		JCuda.cudaMemcpy(d_C, Pointer.to(ret.getDenseBlockValues()), blkSize
+			//				* Sizeof.DOUBLE, cudaMemcpyKind.cudaMemcpyDeviceToHost);
+
+			System.arraycopy(tmpC, 0, ret.getDenseBlockValues(), 0, ret.getDenseBlockValues().length);
+
+			JCuda.cudaFree(d_C);
+			JCuda.cudaFree(d_B);
+			JCuda.cudaFree(d_A);
+
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCublas2.cublasDestroy(cublasHandle);
+
+			double after = ret.getValue(0, 0);
+
+			System.out.println("comparision for result - before: " + before + " after: " + after +", " + tmpC[0]);
+		}else {
+			m1.sparseToDense();
+			if (m1.isInSparseFormat()) {
+				System.out.println("sparse block????????");
 			}
-			else if( n==1 ) {               //MATRIX-VECTOR (tall rhs)
-				matrixMultSparseDenseMVTallRHS(a, b, c, cd, xsp, rl, ru);
+
+			double[] blockA = m1.getDenseBlockValues();
+			double[] blockB = m2.getDenseBlockValues();
+
+			JCuda.setExceptionsEnabled(true);
+			JCublas.setExceptionsEnabled(true);
+			JCublas.cublasInit();
+
+			int blkSize = m1.getNumRows() * m2.getNumColumns();
+			System.out.println("The size of block:" + m1.getNumRows() + "x" + m2.getNumColumns() + ", " + blockA.length + ", "
+					+ blockB.length + ", " + ret.getDenseBlockValues().length + ", blocksize: " + blkSize);
+
+
+			Pointer d_A = new Pointer();
+			Pointer d_B = new Pointer();
+			Pointer d_C = new Pointer();
+			double alpha = 1.0;
+			double beta = 0.0;
+
+			long[] free = new long[1];
+			long[] total = new long[1];
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("before alloc free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+
+			JCuda.cudaMalloc(d_A, m * cd * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_B, cd * n * Sizeof.DOUBLE);
+			JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+
+			JCuda.cudaMemset(d_C, 0, blkSize * Sizeof.DOUBLE);
+
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("after alloc free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+
+			JCublas.cublasSetVector(m * cd, Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
+			JCublas.cublasSetVector(cd * n, Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
+
+			System.out.println("after copy");
+
+
+			//				m1.cleanupBlock(true, false);
+			//				m2.cleanupBlock(true, false);
+
+			//		blockA = null;
+			//		blockB = null;
+
+			double before = ret.getValue(0, 0);
+
+			JCublas.cublasDgemm('n', 'n', m, cd, n, alpha, d_A, m,
+					d_B, cd, beta, d_C, m);
+
+
+			System.out.println("after kernel");
+			//				double resultC[] = new double[blkSize];
+			//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
+			JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
+
+
+			System.out.println("after D2H");
+
+			JCuda.cudaDeviceSynchronize();
+
+			JCublas.cublasFree(d_C);
+			JCublas.cublasFree(d_B);
+			JCublas.cublasFree(d_A);
+
+			m1.examSparsity(true);
+			if (m1.isInSparseFormat()) {
+				System.out.println("sparse block");
+				if (m1.getDenseBlock() != null)
+					System.out.println("both representation");
 			}
-			else if( pm2 && m==1 ) {        //VECTOR-MATRIX
-				matrixMultSparseDenseVM(a, b, c, n, rl, ru);
-			}
-			else if( pm2 && m<=16 ) {       //MATRIX-MATRIX (short lhs) 
-				matrixMultSparseDenseMMShortLHS(a, b, c, n, cd, rl, ru);
-			}
-			else if( n<=64 ) {              //MATRIX-MATRIX (skinny rhs)
-				matrixMultSparseDenseMMSkinnyRHS(a, b, c, n, rl, ru);
-			}
-			else {                          //MATRIX-MATRIX
-				matrixMultSparseDenseMM(a, b, c, n, cd, xsp, rl, ru);
-			}
+
+
+			JCuda.cudaMemGetInfo(free, total);
+
+			System.out.println("after free, free: " + (double) free[0] / 1024.0 / 1024.0 + " total: " + (double) total[0] / 1024.0 / 1024.0 + " used: " + (double) (total[0] - free[0]) / 1024.0 / 1024.0);
+
+			JCublas.cublasShutdown();
+
+
+			//
+			//				ret.init(resultC, m, n);
+			//
+			//				resultC = null;
+			//				d_A = null;
+			//				d_B = null;
+			//				d_C = null;
+
+
+			double after = ret.getValue(0, 0);
+
+			System.out.println("comparision for result - before: " + before + " after: " + after);
 		}
-		else {
-			for( int i=rl; i<ru; i++ ) {
-				if( a.isEmpty(i) ) continue; 
-				int apos = a.pos(i);
-				int alen = a.size(i);
-				int[] aix = a.indexes(i);
-				double[] avals = a.values(i);
-				double[] cvals = c.values(i);
-				int cix = c.pos(i);
-				for(int k = apos; k < apos+alen; k++) {
-					double val = avals[k];
-					double[] bvals = b.values(k);
-					int bix = b.pos(k);
-					for(int j = 0; j < n; j++)
-						cvals[cix+j] += val * bvals[bix+j];
-				}
-			}
-		}
+//
+//		if( LOW_LEVEL_OPTIMIZATION ) {
+//			if( m==1 && n==1 ) {            //DOT PRODUCT
+//				if( !a.isEmpty(0) )
+//					c.set(0, 0, dotProduct(a.values(0), b.values(0), a.indexes(0), a.pos(0), 0, a.size(0)));
+//			}
+//			else if( n==1 && cd<=2*1024 ) { //MATRIX-VECTOR (short rhs)
+//				matrixMultSparseDenseMVShortRHS(a, b, c, cd, rl, ru);
+//			}
+//			else if( n==1 ) {               //MATRIX-VECTOR (tall rhs)
+//				matrixMultSparseDenseMVTallRHS(a, b, c, cd, xsp, rl, ru);
+//			}
+//			else if( pm2 && m==1 ) {        //VECTOR-MATRIX
+//				matrixMultSparseDenseVM(a, b, c, n, rl, ru);
+//			}
+//			else if( pm2 && m<=16 ) {       //MATRIX-MATRIX (short lhs)
+//				matrixMultSparseDenseMMShortLHS(a, b, c, n, cd, rl, ru);
+//			}
+//			else if( n<=64 ) {              //MATRIX-MATRIX (skinny rhs)
+//				matrixMultSparseDenseMMSkinnyRHS(a, b, c, n, rl, ru);
+//			}
+//			else {                          //MATRIX-MATRIX
+
+				// modified code for using cuBLAS kernel instead of SystemML's kernel
+
+
+//				System.out.println("In LOW-OPTIMIZATION");
+//				// modified code for using cuBLAS kernel instead of SystemML's kernel
+//				m1.sparseToDense();
+//
+//				double[] blockA = m1.getDenseBlockValues();
+//				double[] blockB = m2.getDenseBlockValues();
+//
+//				JCuda.setExceptionsEnabled(true);
+//				System.out.println("The size of block:" + m1.getNumRows() + "x" + m2.getNumColumns() );
+//				int blkSize = m1.getNumRows()*m2.getNumColumns();
+//
+//				Pointer d_A = new Pointer();
+//				Pointer d_B = new Pointer();
+//				Pointer d_C = new Pointer();
+//				double alpha = 1.0;
+//				double beta = 0.0;
+//
+//				long[] free = new long[1];
+//				long[] total = new long[1];
+//
+//				JCuda.cudaMemGetInfo(free, total);
+//
+//				System.out.println("free: "+(double)free[0]/1024.0/1024.0+" total: "+ (double)total[0]/1024.0/1024.0+" used: " +(double)(total[0] - free[0])/1024.0/1024.0);
+//
+//				JCublas.cublasInit();
+//				JCuda.cudaMalloc(d_A, m1.getNumRows()*m1.getNumColumns() * Sizeof.DOUBLE);
+//				JCuda.cudaMalloc(d_B, m2.getNumRows()*m2.getNumColumns() * Sizeof.DOUBLE);
+//				JCuda.cudaMalloc(d_C, blkSize * Sizeof.DOUBLE);
+//
+//				JCuda.cudaMemset(d_C,0, blkSize * Sizeof.DOUBLE);
+//
+//				JCublas.cublasSetVector(m1.getNumRows()*m1.getNumColumns(), Sizeof.DOUBLE, Pointer.to(blockA), 1, d_A, 1);
+//				JCublas.cublasSetVector(m2.getNumRows()*m2.getNumColumns() , Sizeof.DOUBLE, Pointer.to(blockB), 1, d_B, 1);
+//
+//
+//
+//
+////				m1.cleanupBlock(true, false);
+////				m2.cleanupBlock(true, false);
+//
+//				blockA = null;
+//				blockB = null;
+//
+//				double before = ret.getValue(0,0);
+//
+//				JCublas.cublasDgemm('n', 'n', m, cd, n, alpha,d_A,m, d_B, cd, beta, d_C, m);
+//
+//
+//
+////				double resultC[] = new double[blkSize];
+////				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(resultC), 1);
+//				JCublas.cublasGetVector(blkSize, Sizeof.DOUBLE, d_C, 1, Pointer.to(ret.getDenseBlockValues()), 1);
+//
+//
+//
+//
+//				JCublas.cublasFree(d_C);
+//				JCublas.cublasFree(d_B);
+//				JCublas.cublasFree(d_A);
+//
+//				m1.examSparsity(true);
+//				if(m1.isInSparseFormat()){
+//					System.out.println("sparse block");
+//					if(m1.getDenseBlock() != null)
+//						System.out.println("both representation");
+//				}
+//
+//
+//				JCuda.cudaMemGetInfo(free, total);
+//
+//				System.out.println("free: "+(double)free[0]/1024.0/1024.0+" total: "+ (double)total[0]/1024.0/1024.0+" used: " +(double)(total[0] - free[0])/1024.0/1024.0);
+//
+//				JCublas.cublasShutdown();
+//
+//
+////
+////				ret.init(resultC, m, n);
+////
+////				resultC = null;
+////				d_A = null;
+////				d_B = null;
+////				d_C = null;
+//
+//
+//				double after = ret.getValue(0,0);
+//
+//				System.out.println("comparision for result - before: " + before +" after: "+after );
+
+
+
+//				matrixMultSparseDenseMM(a, b, c, n, cd, xsp, rl, ru);
+//			}
+//		}
+//		else {
+//			for( int i=rl; i<ru; i++ ) {
+//				if( a.isEmpty(i) ) continue;
+//				int apos = a.pos(i);
+//				int alen = a.size(i);
+//				int[] aix = a.indexes(i);
+//				double[] avals = a.values(i);
+//				double[] cvals = c.values(i);
+//				int cix = c.pos(i);
+//				for(int k = apos; k < apos+alen; k++) {
+//					double val = avals[k];
+//					double[] bvals = b.values(k);
+//					int bix = b.pos(k);
+//					for(int j = 0; j < n; j++)
+//						cvals[cix+j] += val * bvals[bix+j];
+//				}
+//			}
+//		}
 	}
 	
 	private static void matrixMultSparseDenseMVShortRHS(SparseBlock a, DenseBlock b, DenseBlock c, int cd, int rl, int ru) {
